@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/davecgh/go-spew/spew"
+	"regexp"
 )
 
 // The key in this map is the instance ID, useful for quick retrieval of
@@ -25,6 +26,17 @@ type instances interface {
 	make()
 	instances() <-chan *instance
 	dump() string
+}
+
+var cpuBurstRegexp = cpuBurstPattern()
+
+func cpuBurstPattern() *regexp.Regexp {
+  pattern, err := regexp.Compile("t2.*")
+  if err != nil {
+    panic(err)
+  }
+
+  return pattern
 }
 
 func makeInstances() instances {
@@ -227,15 +239,19 @@ func (i *instance) isVirtualizationCompatible(spotVirtualizationTypes []string) 
 }
 
 func (i *instance) isAllowed(instanceType string, allowedList []string) bool {
-	if allowedList != nil && allowedList[0] != "" {
-		for _, a := range allowedList {
-			if a == instanceType {
-				return true
-			}
-		}
-		return false
-	}
-	return true
+  if cpuBurstRegexp.MatchString(instanceType) {
+    return false
+  }
+
+  if allowedList != nil && allowedList[0] != "" {
+    for _, a := range allowedList {
+      if a == instanceType {
+        return true
+      }
+    }
+    return false
+  }
+  return true
 }
 
 func (i *instance) getCheapestCompatibleSpotInstanceType(allowedList []string) (string, error) {
