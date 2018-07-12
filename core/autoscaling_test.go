@@ -1263,7 +1263,8 @@ func TestDetachAndTerminateOnDemandInstance(t *testing.T) {
 				region:    tt.regionASG,
 				instances: tt.instancesASG,
 			}
-			err := a.detachAndTerminateOnDemandInstance(tt.instanceID)
+
+      err := a.detachAndTerminateOnDemandInstance(tt.instanceID, []*ec2.Tag{})
 			CheckErrors(t, err, tt.expected)
 		})
 	}

@@ -331,7 +331,7 @@ func (a *autoScalingGroup) replaceOnDemandInstanceWithSpot(
 		defer a.attachSpotInstance(spotInstanceID)
 	}
 
-	return a.detachAndTerminateOnDemandInstance(odInst.InstanceId)
+	return a.detachAndTerminateOnDemandInstance(odInst.InstanceId, odInst.Tags)
 }
 
 // Returns the information about the first running instance found in
@@ -705,30 +705,61 @@ func (a *autoScalingGroup) attachSpotInstance(spotInstanceID *string) error {
 // Terminates an on-demand instance from the group,
 // but only after it was detached from the autoscaling group
 func (a *autoScalingGroup) detachAndTerminateOnDemandInstance(
-	instanceID *string) error {
+	instanceID *string, tags []*ec2.Tag) error {
 	logger.Println(a.region.name,
 		a.name,
 		"Detaching and terminating instance:",
 		*instanceID)
-	// detach the on-demand instance
-	detachParams := autoscaling.DetachInstancesInput{
-		AutoScalingGroupName: aws.String(a.name),
-		InstanceIds: []*string{
-			instanceID,
-		},
-		ShouldDecrementDesiredCapacity: aws.Bool(true),
-	}
 
 	asSvc := a.region.services.autoScaling
 
-	if _, err := asSvc.DetachInstances(&detachParams); err != nil {
-		logger.Println(err.Error())
-		return err
-	}
+	// for k8s spot instances
+  isK8SSpot := tagsContain(tags, aws.String("Name"), aws.String("nodes."))
 
-	return a.instances.get(*instanceID).terminate()
+  logger.Printf(">>>>>> instance id %s isk8s=%v", *instanceID, isK8SSpot)
+  if isK8SSpot {
+    input := &autoscaling.TerminateInstanceInAutoScalingGroupInput{
+      InstanceId:                     instanceID,
+      ShouldDecrementDesiredCapacity: aws.Bool(true),
+    }
+
+    logger.Printf(">>>>>> instance id %s sending terminate request", *instanceID)
+    act, err := asSvc.TerminateInstanceInAutoScalingGroup(input)
+
+    logger.Printf(">>>>>> instance id %s got terminate response: %v", *instanceID, act)
+    if err != nil {
+      logger.Println(err.Error())
+      return err
+    }
+
+    return nil
+  }
+
+  // detach the on-demand instance
+  detachParams := autoscaling.DetachInstancesInput{
+    AutoScalingGroupName: aws.String(a.name),
+    InstanceIds: []*string{
+      instanceID,
+    },
+    ShouldDecrementDesiredCapacity: aws.Bool(true),
+  }
+
+  if _, err := asSvc.DetachInstances(&detachParams); err != nil {
+    logger.Println(err.Error())
+    return err
+  }
+
+  return a.instances.get(*instanceID).terminate()
 }
 
+func tagsContain(tags []*ec2.Tag, key *string, substr *string) bool {
+    for _, t := range tags {
+      if *t.Key == *key && strings.Contains(*t.Value, *substr) {
+        return true
+      }
+    }
+    return false
+}
 // Counts the number of already running spot instances.
 func (a *autoScalingGroup) alreadyRunningSpotInstanceTypeCount(
 	instanceType, availabilityZone string) int64 {
